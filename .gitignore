@@ -1,0 +1,17 @@
+# Datos privados: claves SOL, RUC y usuarios
+*.env
+
+# Grabaciones de playwright codegen (pueden contener tu clave SOL)
+grabacion*.py
+
+# Boletas descargadas y capturas del portal (datos de clientes)
+comprobantes/
+capturas/
+
+# Ventas reales con DNI de clientes (no subir)
+ventas.xlsx
+~$*
+
+# Entorno de Python (se recrea con pip install -r requirements.txt)
+.venv/
+__pycache__/

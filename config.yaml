@@ -1,0 +1,24 @@
+# Configuración del boletero. Este archivo SÍ se sube a GitHub: no pongas datos privados aquí.
+# RUC, usuario SOL, serie y claves van en .env (que NO se sube). Lo del .env tiene prioridad.
+excel: ventas.xlsx
+modo: simulacion        # simulacion (no abre SUNAT) | ensayo (llena en SUNAT, NO emite) | sunat (emite de verdad)
+headless: false         # false = ves el navegador trabajar (recomendado al inicio)
+pausa_entre_boletas_seg: 3
+# Carpeta de Google Drive (Drive para escritorio) donde se copia el PDF de cada boleta,
+# en subcarpetas por mes. Va en .env como DRIVE_CARPETA=G:\Mi unidad\Boletas Uyay (vacío = no copiar)
+drive_carpeta:
+
+# Cada "cuenta" = un RUC. El nombre debe coincidir con la columna Cuenta del Excel.
+# En .env, por cada cuenta: <CUENTA>_RUC, <CUENTA>_USUARIO_SOL, <CUENTA>_SERIE y la clave_env.
+cuentas:
+  EMPRESA_A:
+    clave_env: "SOL_CLAVE_EMPRESA_A"   # nombre de la variable del .env con la clave SOL
+    serie: "B001"                      # valor por defecto si no está EMPRESA_A_SERIE
+  EMPRESA_B:
+    clave_env: "SOL_CLAVE_EMPRESA_B"
+    serie: "B001"
+
+# Importación desde Odoo (importar_odoo.py): a qué cuenta va cada Punto de venta
+odoo:
+  puntos_de_venta:
+    Uyay: EMPRESA_A

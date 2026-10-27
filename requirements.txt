@@ -1,0 +1,5 @@
+openpyxl
+pyyaml
+playwright
+python-dotenv
+pillow
