@@ -11,6 +11,8 @@ import zipfile
 from itertools import count
 from pathlib import Path
 
+from playwright.sync_api import TimeoutError as PWTimeout
+
 
 class ErrorValidacion(Exception):
     pass
@@ -39,6 +41,7 @@ class SimuladorEmisor:
     def __init__(self, cuentas):
         self.cuentas = cuentas
         self.n = {c: count(1) for c in cuentas}
+        self.ultimo_pdf = None   # mismo atributo que SunatSolEmisor (en simulación no hay PDF)
 
     def emitir(self, b):
         validar(b)
@@ -107,6 +110,16 @@ def leer_numero(archivo):
     return f"{m.group(1)}-{m.group(2)}" if m else None
 
 
+def pdf_desde_captura(captura, ruta):
+    """Plan B: PDF con la imagen de la pantalla final (no es el formato oficial de SUNAT)."""
+    from PIL import Image
+    if not captura or not Path(captura).exists():
+        return None
+    Image.open(captura).convert("RGB").save(ruta, "PDF")
+    print(f"       ! Se guardó el PDF desde la captura de pantalla: {Path(ruta).name}")
+    return ruta
+
+
 class SunatSolEmisor:
     """ensayo=True llena la boleta hasta la vista previa y NO presiona Emitir."""
 
@@ -127,7 +140,6 @@ class SunatSolEmisor:
         return self.page.frame_locator(SELECTORES["iframe"])
 
     def _login(self, nombre):
-        from playwright.sync_api import TimeoutError as PWTimeout
         cfg = self.cuentas[nombre]
         clave = os.environ.get(cfg["clave_env"])
         if not clave:
@@ -177,7 +189,6 @@ class SunatSolEmisor:
 
     def _elegir_tipo_doc(self, td):
         """La lista de SUNAT tarda en activarse tras cargar el formulario: reintentar el clic."""
-        from playwright.sync_api import TimeoutError as PWTimeout
         p, f = self.page, self.form
         campo = f.locator(SELECTORES["tipo_doc"])
         patron = re.compile(OPCIONES_DOC[td], re.I)
@@ -253,10 +264,10 @@ class SunatSolEmisor:
     def _verificar_importe(self, b):
         """Última barrera antes de Emitir: cada producto de la vista previa debe tener el importe del Excel."""
         self.form.locator("tr").first.wait_for(timeout=10000)
-        textos = self.form.locator("tr").all_inner_texts()
+        textos = [sin_tildes(t) for t in self.form.locator("tr").all_inner_texts()]
         for item in b["items"]:
             desc = sin_tildes(item["Descripcion"])
-            filas = [t for t in textos if desc in sin_tildes(t)]
+            filas = [t for t in textos if desc in t]
             numeros = re.findall(r"\d[\d,]*\.\d+", filas[-1]) if filas else []
             importe = a_numero(numeros[-1]) if numeros else None
             if importe is None or abs(importe - item["Total"]) > 0.01:
@@ -273,15 +284,18 @@ class SunatSolEmisor:
             pass
         return ruta
 
-    def _guardar(self, descarga, b):
+    @staticmethod
+    def _carpeta(b):
         carpeta = BASE / "comprobantes" / b["Cuenta"]
         carpeta.mkdir(parents=True, exist_ok=True)
-        ruta = carpeta / f"fila{b['fila']}_{descarga.suggested_filename}"
+        return carpeta
+
+    def _guardar(self, descarga, b):
+        ruta = self._carpeta(b) / f"fila{b['fila']}_{descarga.suggested_filename}"
         descarga.save_as(ruta)
         return ruta
 
     def emitir(self, b):
-        from playwright.sync_api import TimeoutError as PWTimeout
         validar(b)
         if b["Cuenta"] in self.login_fallido:
             raise ErrorValidacion(f"Login de {b['Cuenta']} falló antes en esta corrida; no se reintenta")
@@ -307,21 +321,21 @@ class SunatSolEmisor:
             raise
 
     def _emitir_y_leer(self, b):
-        from playwright.sync_api import TimeoutError as PWTimeout
         p, f = self.page, self.form
         self.descargas.clear()
         f.get_by_role("button", name="Emitir").click()
-        f.get_by_role("button", name="Aceptar").click()   # confirmación de SUNAT
+        f.get_by_role("button", name="Aceptar").click()   # confirmación de SUNAT: aquí llega el ZIP con el XML
         # Pantalla final: la que tiene Descargar PDF / Descargar XML
         f.get_by_role("button", name="Descargar XML").wait_for(timeout=120000)
-        self._captura(b, "emitida")
+        captura = self._captura(b, "emitida")
         pantalla = p.frame(name="iframeApplication").inner_text("body")
-        try:
-            with p.expect_download(timeout=30000):
-                f.get_by_role("button", name="Descargar XML").click()
-        except PWTimeout:
-            pass
         p.wait_for_timeout(1000)
+        if not self.descargas:   # solo si el ZIP no llegó solo (antes se esperaban 30 s siempre)
+            try:
+                with p.expect_download(timeout=15000):
+                    f.get_by_role("button", name="Descargar XML").click()
+            except PWTimeout:
+                pass
         archivos = [self._guardar(d, b) for d in self.descargas]
         numero = next((n for a in archivos if (n := leer_numero(a))), None) or numero_en_texto(pantalla)
         # El PDF es solo para archivar (Drive): si falla, la boleta igual quedó emitida
@@ -331,7 +345,7 @@ class SunatSolEmisor:
             print(f"       ! No se pudo obtener el PDF de SUNAT ({type(e).__name__}: {e})")
             self.ultimo_pdf = None
         if not self.ultimo_pdf:
-            self.ultimo_pdf = self._pdf_desde_captura(b, numero)
+            self.ultimo_pdf = pdf_desde_captura(captura, self._carpeta(b) / f"{numero or 'fila' + str(b['fila'])}_captura.pdf")
         try:
             f.get_by_role("button", name="Cerrar").click(timeout=5000)
             f.get_by_role("button", name="Aceptar").click(timeout=5000)
@@ -345,9 +359,7 @@ class SunatSolEmisor:
         """Botón "Descargar PDF" de la pantalla final. SUNAT puede mandarlo como descarga
         o abrirlo en otra pestaña: se aceptan las dos formas."""
         p, ctx = self.page, self.page.context
-        carpeta = BASE / "comprobantes" / b["Cuenta"]
-        carpeta.mkdir(parents=True, exist_ok=True)
-        ruta = carpeta / f"{numero or 'fila' + str(b['fila'])}.pdf"
+        ruta = self._carpeta(b) / f"{numero or 'fila' + str(b['fila'])}.pdf"
         antes, pestanas = len(self.descargas), list(ctx.pages)
         self.form.get_by_role("button", name="Descargar PDF").click(timeout=10000)
         for _ in range(20):
@@ -367,18 +379,6 @@ class SunatSolEmisor:
             print(f"       ! Pestaña del PDF no reconocida: {pg.url[:120]}")
             pg.close()
         return None
-
-    def _pdf_desde_captura(self, b, numero):
-        """Plan B: PDF con la imagen de la pantalla final (no es el formato oficial de SUNAT)."""
-        from PIL import Image
-        capturas = sorted((BASE / "capturas").glob(f"fila{b['fila']}_emitida_*.png"))
-        if not capturas:
-            return None
-        ruta = BASE / "comprobantes" / b["Cuenta"] / f"{numero or 'fila' + str(b['fila'])}_captura.pdf"
-        ruta.parent.mkdir(parents=True, exist_ok=True)
-        Image.open(capturas[-1]).convert("RGB").save(ruta, "PDF")
-        print(f"       ! Se guardó el PDF desde la captura de pantalla: {ruta.name}")
-        return ruta
 
     def cerrar(self):
         self.browser.close()

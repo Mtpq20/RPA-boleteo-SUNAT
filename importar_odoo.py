@@ -12,20 +12,20 @@ orden en UNA boleta. Una orden que ya está en ventas.xlsx no se vuelve a import
 """
 import os
 import sys
-import unicodedata
 from pathlib import Path
 
 import yaml
 from openpyxl import load_workbook
 
+from emisores import sin_tildes
 from excel_io import asegurar_columna, escribir_resumen
 
 BASE = Path(__file__).parent
 
 
 def clave(texto):
-    t = unicodedata.normalize("NFKD", str(texto or "")).encode("ascii", "ignore").decode()
-    return " ".join(t.lower().split())
+    """Encabezado sin tildes ni mayúsculas: 'Líneas de la orden/Producto' -> 'lineas de la orden/producto'."""
+    return sin_tildes(texto).lower()
 
 
 # Columna de la exportación de Odoo -> textos que puede tener su encabezado

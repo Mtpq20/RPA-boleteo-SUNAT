@@ -118,35 +118,40 @@ def leer_pendientes(ruta):
     asegurar_columna(ws, enc, "Ref_Odoo")
     asegurar_columna(ws, enc, "Huella")   # columna técnica para detectar filas corregidas
     idx = {n: i for i, n in enumerate(enc)}
-    pend = []
-    for r in range(2, ws.max_row + 1):
-        estado = ws.cell(r, idx["Estado"] + 1).value
-        if ws.cell(r, 1).value is None:
-            continue
-        corregida = estado == "ERROR" and ws.cell(r, idx["Huella"] + 1).value != huella(ws, idx, r)
+
+    def fila(r, valores):
+        d = dict(zip(enc, valores))
+        d["fila"] = r
+        # El Total es fórmula; si no hay valor cacheado lo calculamos
+        d["Total"] = round(float(d["Cantidad"]) * float(d["Precio_Unit"]), 2)
+        return d
+
+    # Una sola lectura de la hoja (antes se leía celda por celda, dos veces)
+    filas = {r: v for r, v in enumerate(ws.iter_rows(min_row=2, max_col=len(enc), values_only=True), start=2)
+             if v[0] is not None}
+    pend = {}
+    for r, v in filas.items():
+        estado = v[idx["Estado"]]
+        corregida = estado == "ERROR" and v[idx["Huella"]] != huella(ws, idx, r)
         if estado in (None, "", "PENDIENTE") or corregida:
-            d = {n: ws.cell(r, i + 1).value for n, i in idx.items()}
-            d["fila"] = r
-            # El Total es fórmula; si no hay valor cacheado lo calculamos
-            d["Total"] = round(float(d["Cantidad"]) * float(d["Precio_Unit"]), 2)
-            pend.append(d)
+            pend[r] = fila(r, v)
     # Si se corrigió una fila de una orden en ERROR, se reintenta la orden completa
-    refs = {str(d.get("Ref_Odoo") or "").strip() for d in pend} - {""}
-    ya = {d["fila"] for d in pend}
-    for r in range(2, ws.max_row + 1):
-        if (r not in ya and ws.cell(r, idx["Estado"] + 1).value == "ERROR"
-                and str(ws.cell(r, idx["Ref_Odoo"] + 1).value or "").strip() in refs):
-            d = {n: ws.cell(r, i + 1).value for n, i in idx.items()}
-            d["fila"] = r
-            d["Total"] = round(float(d["Cantidad"]) * float(d["Precio_Unit"]), 2)
-            pend.append(d)
-    pend.sort(key=lambda d: d["fila"])
-    return wb, ws, idx, pend
+    refs = {str(d.get("Ref_Odoo") or "").strip() for d in pend.values()} - {""}
+    for r, v in filas.items():
+        if r not in pend and v[idx["Estado"]] == "ERROR" and str(v[idx["Ref_Odoo"]] or "").strip() in refs:
+            pend[r] = fila(r, v)
+    return wb, ws, idx, [pend[r] for r in sorted(pend)]
 
 
 def agrupar(ws, idx, pend):
     """Junta las filas pendientes en boletas: misma Ref_Odoo = una boleta con varios productos.
     Cuenta/Cliente/DNI se toman de la fila de la orden que los tenga (basta con la primera)."""
+    # Filas de cada orden en toda la hoja (una sola pasada, no una por orden)
+    col_ref = idx["Ref_Odoo"]
+    en_hoja = {}
+    for r, v in enumerate(ws.iter_rows(min_row=2, min_col=col_ref + 1, max_col=col_ref + 1, values_only=True), start=2):
+        if str(v[0] or "").strip():
+            en_hoja.setdefault(str(v[0]).strip(), []).append(r)
     grupos = {}
     for d in pend:
         ref = str(d.get("Ref_Odoo") or "").strip()
@@ -164,19 +169,21 @@ def agrupar(ws, idx, pend):
         b["Total"] = round(sum(i["Total"] for i in b["items"]), 2)
         if not clave.startswith("fila "):
             # Toda la orden debe estar pendiente: si una parte ya se emitió, no emitir el resto solo
-            en_hoja = [r for r in range(2, ws.max_row + 1) if str(ws.cell(r, idx["Ref_Odoo"] + 1).value or "").strip() == clave]
-            if sorted(en_hoja) != sorted(b["filas"]):
-                b["error"] = f"La orden {clave} tiene filas en otro estado (filas {en_hoja}); revísala"
+            if sorted(en_hoja.get(clave, [])) != sorted(b["filas"]):
+                b["error"] = f"La orden {clave} tiene filas en otro estado (filas {en_hoja.get(clave)}); revísala"
         normalizar_doc(b)
         boletas.append(b)
     return boletas
 
 
-def marcar(wb, ws, idx, ruta, fila, estado, serie_numero=None, error=None):
-    # .value = ... (ws.cell(f, c, None) no borra el valor anterior)
-    ws.cell(fila, idx["Estado"] + 1).value = estado
-    ws.cell(fila, idx["Serie_Numero"] + 1).value = serie_numero
-    ws.cell(fila, idx["Fecha_Emision"] + 1).value = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if estado == "EMITIDA" else None
-    ws.cell(fila, idx["Error"] + 1).value = error
-    ws.cell(fila, idx["Huella"] + 1).value = huella(ws, idx, fila) if estado == "ERROR" else None
+def marcar(wb, ws, idx, ruta, filas, estado, serie_numero=None, error=None):
+    """Marca una fila o todas las filas (productos) de una boleta y guarda UNA vez."""
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if estado == "EMITIDA" else None
+    for fila in [filas] if isinstance(filas, int) else filas:
+        # .value = ... (ws.cell(f, c, None) no borra el valor anterior)
+        ws.cell(fila, idx["Estado"] + 1).value = estado
+        ws.cell(fila, idx["Serie_Numero"] + 1).value = serie_numero
+        ws.cell(fila, idx["Fecha_Emision"] + 1).value = fecha
+        ws.cell(fila, idx["Error"] + 1).value = error
+        ws.cell(fila, idx["Huella"] + 1).value = huella(ws, idx, fila) if estado == "ERROR" else None
     wb.save(ruta)   # se guarda en cada boleta: si el bot se cae, no se pierde nada

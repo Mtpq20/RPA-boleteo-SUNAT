@@ -90,8 +90,7 @@ def main():
     ok = err = 0
 
     def marcar_boleta(b, estado, numero=None, error=None):
-        for fila in b["filas"]:   # todas las filas (productos) de la boleta quedan igual
-            marcar(wb, ws, idx, ruta, fila, estado, numero, error)
+        marcar(wb, ws, idx, ruta, b["filas"], estado, numero, error)   # todos sus productos, un solo guardado
 
     try:
         # Agrupar por cuenta para hacer login una sola vez por RUC
@@ -114,7 +113,7 @@ def main():
                 marcar_boleta(b, "EMITIDA", numero)
                 ok += 1
                 print(f"  OK   {nombre} {b['Cuenta']} {numero} S/ {b['Total']:.2f}")
-                copiar_a_drive(cfg, getattr(emisor, "ultimo_pdf", None), b, numero)
+                copiar_a_drive(cfg, emisor.ultimo_pdf, b, numero)
             except ErrorValidacion as e:
                 marcar_boleta(b, "ERROR", error=str(e))
                 err += 1
