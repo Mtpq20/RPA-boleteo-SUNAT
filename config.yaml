@@ -8,8 +8,10 @@ pausa_entre_boletas_seg: 3
 # en subcarpetas por mes. Va en .env como DRIVE_CARPETA=G:\Mi unidad\Boletas Uyay (vacío = no copiar)
 drive_carpeta:
 
-# Cada "cuenta" = un RUC. El nombre debe coincidir con la columna Cuenta del Excel.
+# Cada "cuenta" = una empresa (un RUC). El nombre debe coincidir con la columna Cuenta del Excel
+# (puedes renombrarlas, p. ej. UYAY, pero cambia también el prefijo en .env).
 # En .env, por cada cuenta: <CUENTA>_RUC, <CUENTA>_USUARIO_SOL, <CUENTA>_SERIE y la clave_env.
+# Una cuenta sin RUC/usuario en .env queda desactivada: sus ventas se quedan PENDIENTE.
 cuentas:
   EMPRESA_A:
     clave_env: "SOL_CLAVE_EMPRESA_A"   # nombre de la variable del .env con la clave SOL
@@ -17,8 +19,15 @@ cuentas:
   EMPRESA_B:
     clave_env: "SOL_CLAVE_EMPRESA_B"
     serie: "B001"
+  EMPRESA_C:
+    clave_env: "SOL_CLAVE_EMPRESA_C"
+    serie: "B001"
+  EMPRESA_D:
+    clave_env: "SOL_CLAVE_EMPRESA_D"
+    serie: "B001"
 
 # Importación desde Odoo (importar_odoo.py): a qué cuenta va cada Punto de venta
 odoo:
   puntos_de_venta:
     Uyay: EMPRESA_A
+    # Otro punto de venta: EMPRESA_B

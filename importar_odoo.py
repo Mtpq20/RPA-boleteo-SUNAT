@@ -12,20 +12,22 @@ orden en UNA boleta. Una orden que ya está en ventas.xlsx no se vuelve a import
 """
 import os
 import sys
+import unicodedata
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 from openpyxl import load_workbook
 
-from emisores import sin_tildes
-from excel_io import asegurar_columna, escribir_resumen
+from excel_io import preparar_libro
 
 BASE = Path(__file__).parent
+load_dotenv(BASE / ".env")   # EXCEL puede venir del .env, igual que en main.py
 
 
 def clave(texto):
-    """Encabezado sin tildes ni mayúsculas: 'Líneas de la orden/Producto' -> 'lineas de la orden/producto'."""
-    return sin_tildes(texto).lower()
+    t = unicodedata.normalize("NFKD", str(texto or "")).encode("ascii", "ignore").decode()
+    return " ".join(t.lower().split())
 
 
 # Columna de la exportación de Odoo -> textos que puede tener su encabezado
@@ -71,22 +73,30 @@ def main():
     prueba = "--prueba" in sys.argv
     if not args:
         sys.exit(__doc__)
-    cfg = yaml.safe_load(open(BASE / "config.yaml", encoding="utf-8"))
+    cfg = yaml.safe_load((BASE / "config.yaml").read_text(encoding="utf-8"))
+    cuentas = list(cfg["cuentas"])
     pdv_cuenta = (cfg.get("odoo") or {}).get("puntos_de_venta") or {}
+    malas = {pdv: c for pdv, c in pdv_cuenta.items() if c not in cuentas}
+    if malas:
+        sys.exit(f"config.yaml > odoo > puntos_de_venta apunta a cuentas que no existen: {malas}")
     ruta_ventas = BASE / os.environ.get("EXCEL", cfg["excel"])
 
     ordenes = leer_exportacion(args[0])
     wb = load_workbook(ruta_ventas)
     ws = wb["Ventas"]
-    enc = [c.value for c in ws[1]]
-    asegurar_columna(ws, enc, "Ref_Odoo")
-    asegurar_columna(ws, enc, "Huella")
-    idx = {n: i + 1 for i, n in enumerate(enc)}
+    idx = {n: i + 1 for n, i in preparar_libro(wb, cuentas).items()}   # 1-based
 
-    ultima = max((r for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value is not None), default=1)
-    ids = [ws.cell(r, 1).value for r in range(2, ultima + 1)]
-    sig_id = max([i for i in ids if isinstance(i, (int, float))], default=0) + 1
-    ya = {str(ws.cell(r, idx["Ref_Odoo"]).value).strip() for r in range(2, ultima + 1) if ws.cell(r, idx["Ref_Odoo"]).value}
+    # Una sola pasada: última fila con datos, siguiente ID y órdenes ya importadas
+    ultima, sig_id, ya = 1, 1, set()
+    for r, fila_xl in enumerate(ws.iter_rows(min_row=2, max_col=idx["Ref_Odoo"], values_only=True), start=2):
+        id_, ref = fila_xl[0], fila_xl[-1]
+        if id_ is None:
+            continue
+        ultima = r
+        if isinstance(id_, (int, float)):
+            sig_id = max(sig_id, int(id_) + 1)
+        if ref:
+            ya.add(str(ref).strip())
 
     fila = ultima + 1
     importadas = 0
@@ -141,7 +151,7 @@ def main():
     if prueba:
         print(f"\n(--prueba) Se importarían {importadas} orden(es). No se modificó {ruta_ventas.name}.")
         return
-    escribir_resumen(wb["Resumen"], list(cfg["cuentas"]))
+    preparar_libro(wb, cuentas)   # amplía los filtros a las filas nuevas
     try:
         wb.save(ruta_ventas)
     except PermissionError:

@@ -10,6 +10,7 @@ capturas/
 
 # Ventas reales con DNI de clientes (no subir)
 ventas.xlsx
+demo_presentacion.xlsx
 ~$*
 
 # Entorno de Python (se recrea con pip install -r requirements.txt)
