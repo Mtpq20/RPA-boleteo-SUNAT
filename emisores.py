@@ -237,18 +237,22 @@ class SunatSolEmisor:
         self._verificar_importe(b)
 
     def _escribir_numero(self, selector, valor, nombre):
-        """Con fill("1.0") el portal guardó 0.001: se teclea como una persona y se relee el campo."""
+        """Con fill("1.0") el portal guardó 0.001: se teclea como una persona y se relee el campo.
+        Con decimales el portal rechazó "1.5" (dejó el campo vacío): se prueba "1.50" y "1,50"."""
         p, campo = self.page, self.form.locator(selector)
-        texto = precio_texto(valor)
-        campo.click()
-        campo.press("ControlOrMeta+A")
-        campo.press("Delete")
-        campo.press_sequentially(texto, delay=80)
-        campo.press("Tab")
-        p.wait_for_timeout(500)
-        visto = a_numero(campo.input_value())
-        if visto is None or abs(visto - valor) > 0.005:
-            raise ErrorValidacion(f"El campo {nombre} quedó como {campo.input_value()!r} en SUNAT (se escribió {texto})")
+        textos = list(dict.fromkeys([precio_texto(valor), f"{valor:.2f}", f"{valor:.2f}".replace(".", ",")]))
+        for texto in textos:
+            campo.click()
+            campo.press("ControlOrMeta+A")
+            campo.press("Delete")
+            campo.press_sequentially(texto, delay=80)
+            campo.press("Tab")
+            p.wait_for_timeout(500)
+            leido = campo.input_value()
+            visto = a_numero(leido.replace(",", ".") if "," in texto else leido)
+            if visto is not None and abs(visto - valor) <= 0.005:
+                return
+        raise ErrorValidacion(f"El campo {nombre} quedó como {leido!r} en SUNAT (se probó {', '.join(textos)})")
 
     def _verificar_importe(self, b):
         """Última barrera antes de Emitir: cada producto de la vista previa debe tener el importe del Excel."""

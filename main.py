@@ -14,7 +14,8 @@ from datetime import datetime
 from pathlib import Path
 import yaml
 from dotenv import load_dotenv
-from excel_io import agrupar, crear_plantilla, guardar, leer_pendientes, marcar
+from excel_io import (ALERTA_PORC, agrupar, boleteado_en_mes, crear_plantilla, escribir_hojas_empresa,
+                      escribir_por_mes, guardar, leer_pendientes, limites_de, marcar)
 from emisores import crear_emisor, ErrorValidacion
 
 # Claves SOL desde .env (junto a este archivo); no pisa variables ya definidas en Windows
@@ -108,7 +109,7 @@ def main():
     ruta = cfg["excel"]
     if demo_presentacion:
         cfg["drive_carpeta"] = None
-        crear_plantilla(ruta, list(cfg["cuentas"]), DEMO_PRESENTACION)
+        crear_plantilla(ruta, list(cfg["cuentas"]), DEMO_PRESENTACION, limites_de(cfg))
         print(f"DEMOSTRACIÓN (simulación, no se conecta a SUNAT). Excel: {ruta}\n")
 
     if "--crear-demo" in sys.argv:
@@ -121,11 +122,12 @@ def main():
             (6, "2026-10-26", "EMPRESA_C", 1, "45123456", "Juan Pérez", "Pantalón", 1, 89.00),
             (7, "2026-10-26", "EMPRESA_D", 0, "", "Clientes varios", "Medias", 3, 9.90),
         ]
-        crear_plantilla(ruta, list(cfg["cuentas"]), demo)
+        crear_plantilla(ruta, list(cfg["cuentas"]), demo, limites_de(cfg))
         print(f"Plantilla creada: {ruta}")
         return
 
-    wb, ws, idx, pendientes, filas_por_ref = leer_pendientes(ruta, list(cfg["cuentas"]))
+    limites = limites_de(cfg)
+    wb, ws, idx, pendientes, filas_por_ref = leer_pendientes(ruta, list(cfg["cuentas"]), limites)
     guardar(wb, ruta)   # deja al día filtros/lista/Resumen y confirma que el Excel no está abierto
     boletas = agrupar(pendientes, filas_por_ref)
     inactivas = [b for b in boletas if b["Cuenta"] in cfg["cuentas"] and b["Cuenta"] not in cfg["activas"]]
@@ -152,6 +154,18 @@ def main():
                 err += 1
                 print(f"  ERR  {nombre}: cuenta {b['Cuenta']!r}")
                 continue
+            limite = limites.get(b["Cuenta"])
+            if limite:
+                mes = datetime.now().strftime("%Y-%m")
+                usado = boleteado_en_mes(ws, idx, b["Cuenta"], mes)
+                if usado + b["Total"] > limite + 0.005:
+                    # ERROR: no se emitió. Cambiar la fila (o ponerla en PENDIENTE) la vuelve a intentar.
+                    marcar_boleta(b, "ERROR", error=(
+                        f"Supera el tope mensual de {b['Cuenta']}: ya boleteado S/ {usado:.2f} en {mes} "
+                        f"+ esta S/ {b['Total']:.2f} > S/ {limite:.2f}. No se emitió."))
+                    err += 1
+                    print(f"  TOPE {nombre} {b['Cuenta']}: S/ {usado:.2f} + S/ {b['Total']:.2f} pasa el tope de S/ {limite:.2f}")
+                    continue
             # Marcar antes de emitir: si el bot se cae a mitad, no se duplica la boleta
             marcar_boleta(b, "EN_PROCESO")
             try:
@@ -164,6 +178,10 @@ def main():
                 marcar_boleta(b, "EMITIDA", numero)
                 ok += 1
                 print(f"  OK   {nombre} {b['Cuenta']} {numero} S/ {b['Total']:.2f}")
+                if limite:
+                    usado = boleteado_en_mes(ws, idx, b["Cuenta"], datetime.now().strftime("%Y-%m"))
+                    if usado >= ALERTA_PORC * limite:
+                        print(f"       ! {b['Cuenta']} lleva S/ {usado:.2f} este mes: le quedan S/ {limite - usado:.2f} del tope")
                 if cfg["modo"] != "simulacion":
                     copiar_a_drive(cfg, getattr(emisor, "ultimo_pdf", None), b, numero)
             except ErrorValidacion as e:
@@ -179,6 +197,10 @@ def main():
             time.sleep(cfg["pausa_entre_boletas_seg"] if cfg["modo"] != "simulacion" else 0)
     finally:
         emisor.cerrar()
+        # Al día con lo que pasó en esta corrida (meses nuevos, boletas que quedaron en REVISAR)
+        escribir_por_mes(wb, ws, list(cfg["cuentas"]), idx, limites)
+        escribir_hojas_empresa(wb, list(cfg["cuentas"]), idx)   # hojas por empresa con el resultado final
+        guardar(wb, ruta)
     print(f"Listo. Emitidas: {ok} | Con problema: {err}")
     if demo_presentacion:
         resumen_por_empresa(boletas, ws, idx)

@@ -19,7 +19,7 @@ import yaml
 from dotenv import load_dotenv
 from openpyxl import load_workbook
 
-from excel_io import preparar_libro
+from excel_io import limites_de, preparar_libro
 
 BASE = Path(__file__).parent
 load_dotenv(BASE / ".env")   # EXCEL puede venir del .env, igual que en main.py
@@ -84,7 +84,7 @@ def main():
     ordenes = leer_exportacion(args[0])
     wb = load_workbook(ruta_ventas)
     ws = wb["Ventas"]
-    idx = {n: i + 1 for n, i in preparar_libro(wb, cuentas).items()}   # 1-based
+    idx = {n: i + 1 for n, i in preparar_libro(wb, cuentas, limites_de(cfg)).items()}   # 1-based
 
     # Una sola pasada: última fila con datos, siguiente ID y órdenes ya importadas
     ultima, sig_id, ya = 1, 1, set()
@@ -151,7 +151,7 @@ def main():
     if prueba:
         print(f"\n(--prueba) Se importarían {importadas} orden(es). No se modificó {ruta_ventas.name}.")
         return
-    preparar_libro(wb, cuentas)   # amplía los filtros a las filas nuevas
+    preparar_libro(wb, cuentas, limites_de(cfg))   # amplía los filtros a las filas nuevas
     try:
         wb.save(ruta_ventas)
     except PermissionError:

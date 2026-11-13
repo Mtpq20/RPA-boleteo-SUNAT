@@ -8,6 +8,11 @@ pausa_entre_boletas_seg: 3
 # en subcarpetas por mes. Va en .env como DRIVE_CARPETA=G:\Mi unidad\Boletas Uyay (vacío = no copiar)
 drive_carpeta:
 
+# Tope de lo boleteado por empresa en un mes (S/). Si una boleta lo haría pasar, NO se emite:
+# queda en ERROR con el motivo. Una empresa puede tener su propio tope con "limite_mensual:".
+# Vacío = sin tope.
+limite_mensual: 5000
+
 # Cada "cuenta" = una empresa (un RUC). El nombre debe coincidir con la columna Cuenta del Excel
 # (puedes renombrarlas, p. ej. UYAY, pero cambia también el prefijo en .env).
 # En .env, por cada cuenta: <CUENTA>_RUC, <CUENTA>_USUARIO_SOL, <CUENTA>_SERIE y la clave_env.
@@ -22,9 +27,11 @@ cuentas:
   EMPRESA_C:
     clave_env: "SOL_CLAVE_EMPRESA_C"
     serie: "B001"
+    odoo: false                        # no usa Odoo: su hoja no muestra Ref_Odoo
   EMPRESA_D:
     clave_env: "SOL_CLAVE_EMPRESA_D"
     serie: "B001"
+    odoo: false
 
 # Importación desde Odoo (importar_odoo.py): a qué cuenta va cada Punto de venta
 odoo:
